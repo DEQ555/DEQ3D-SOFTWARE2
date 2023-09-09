@@ -10,7 +10,7 @@ static void _Memset( void* _x, char _y, unsigned _z ){
 
 ////////////////////////////////////////////////////////////////////////////
 // Save file .bmp
-void __fastcall SaveBMP( const char* filename, unsigned char *data, const unsigned int ancho, const unsigned int alto, unsigned char bpp ){
+void SaveBMP( const char* filename, unsigned char *data, const unsigned int ancho, const unsigned int alto, unsigned char bpp ){
 	int Y;
 	unsigned int X,STEP;
 	unsigned char BPP, BYTES_BAZURAS[3];
@@ -118,11 +118,17 @@ int _GUB_LOAD_FVM_( struct GUB_FVM3D_OBJECT *X, const char Archivo[] ){
 // Grill Draw
 //
 typedef struct{
+	int act;
 	float area;
+	unsigned int Pmodel;
 	float vx0,vy0,vz0;
 	float vx1,vy1,vz1;
 	float vx2,vy2,vz2;
+	float tx0,ty0;
+	float tx1,ty1;
+	float tx2,ty2;
 }GRILL;
+#include <intrin.h>
 
 ////////////////////////////////////////////////
 // Create Screen Buffer[CANVAS]
@@ -130,13 +136,14 @@ typedef struct{
 int* Vbuff = NULL;
 int* Zbuff = NULL;
 GRILL* Gbuff = NULL;
+int _fills[2] = {0,-99999};
 unsigned int _size = 0;
 unsigned int _w = 0;
 unsigned int _h = 0;
 unsigned int _wm = 0;
 unsigned int _hm = 0;
 
-struct GUB_FVM3D_OBJECT _Model;
+struct GUB_FVM3D_OBJECT _Model[5];
 
 void CreateCanvas(
 	const int w,
@@ -147,223 +154,107 @@ void CreateCanvas(
 	_wm = w>>1;
 	_hm = h>>1;
 	_size = w * h;
-	Vbuff = (int*)malloc( sizeof(int) * _size );
-	Zbuff = (int*)malloc( sizeof(int) * _size );
-	Gbuff = (GRILL*)malloc( sizeof(GRILL) * _size );
+	Vbuff = (int*)_aligned_malloc( sizeof(int) * _size, sizeof(unsigned int) * 8 );
+	Zbuff = (int*)_aligned_malloc( sizeof(int) * _size, sizeof(unsigned int) * 8 );
+	Gbuff = (GRILL*)_aligned_malloc( sizeof(GRILL) * _size, sizeof(unsigned int) * 8 );
 	for (unsigned int i = 0; i < _size; ++i){
-		Vbuff[i]=0;
-		Zbuff[i]=0;
-		Gbuff[i].area=0;
+		Vbuff[i]=_fills[0];
+		Zbuff[i]=_fills[1];
+		Gbuff[i].act=0;
 	}
 }
 
 void FreeCanvas(void){
 	_wm=_hm=_w=_h=_size=0;
-	free(Vbuff);
-	free(Zbuff);
-	free(Gbuff);
+	_aligned_free(Vbuff);
+	_aligned_free(Zbuff);
+	_aligned_free(Gbuff);
 	Vbuff=NULL;
 	Zbuff=NULL;
 	Gbuff=NULL;
 }
 
+void SetFillCanvas( int c ){
+	_fills[0]=c;
+}
+
+void SetFillDepth( int c ){
+	_fills[1]=c;
+}
+
 ////////////////////////////////////////////////
 // Draw Screen/Canvas
 //
-  void __fastcall FlipBuff(void){
+  void FlipBuff(void){
 	SaveBMP("VideoRaster.bmp",(unsigned char*)Vbuff,_w,_h,32);
 }
+
+
+
+
+///////////////////////////////////////////////////////////////////////
+///////////////////////////////////////////////////////////////////////
+///////////////////////////////////////////////////////////////////////
+
+#define MAXSIN 255
+const unsigned char sinTab[91] = {
+0,4,8,13,17,22,26,31,35,39,44,48,53,57,61,65,70,74,78,83,87,91,95,99,103,107,111,115,119,123,
+127,131,135,138,142,146,149,153,156,160,163,167,170,173,177,180,183,186,189,192,195,198,200,203,206,208,211,213,216,218,
+220,223,225,227,229,231,232,234,236,238,239,241,242,243,245,246,247,248,249,250,251,251,252,253,253,254,254,254,254,254,
+255
+};
+
+int fastSin(int i)
+{
+	while(i<0) i+=360;
+	while(i>=360) i-=360;
+	if(i<90)  return((sinTab[i])); else
+	if(i<180) return((sinTab[180-i])); else
+	if(i<270) return(-(sinTab[i-180])); else
+	return(-(sinTab[360-i]));
+}
+
+int fastCos(int i){
+	return fastSin(i+90);
+}
+
+
 
 ///////////////////////////////////////////////////////////////////////
 ///////////////////////////////////////////////////////////////////////
 ///////////////////////////////////////////////////////////////////////
 /*          RASTER          */
 
-// Función para dibujar un triángulo en modo TriangleWire
-/*void DrawTriangleWire(int x0, int y0, int x1, int y1, int x2, int y2, int color) {
-    // Dibuja las tres líneas del triángulo que conectan sus vértices
-    int dx01 = abs(x0 - x1), dy01 = abs(y0 - y1);
-    int dx12 = abs(x1 - x2), dy12 = abs(y1 - y2);
-    int dx20 = abs(x2 - x0), dy20 = abs(y2 - y0);
-
-    int longest = dx01;
-    if (dx12 > longest) longest = dx12;
-    if (dx20 > longest) longest = dx20;
-
-    for (int i = 0; i <= longest; i++) {
-        float t01 = (float)i / longest;
-        float t12 = (float)i / longest;
-        float t20 = (float)i / longest;
-
-        int x01 = x0 + dx01 * t01, y01 = y0 + dy01 * t01;
-        int x12 = x1 + dx12 * t12, y12 = y1 + dy12 * t12;
-        int x20 = x2 + dx20 * t20, y20 = y2 + dy20 * t20;
-
-        PixelSet(x01, y01, color);
-        PixelSet(x12, y12, color);
-        PixelSet(x20, y20, color);
-    }
-}
-
-void DrawTriangleWireOptimized(int x0, int y0, int x1, int y1, int x2, int y2, int* Vbuff, int Ancho, int Alto, int color) {
-    // Función para establecer un píxel en el búfer RGBA
-    // Supongamos que cada píxel se almacena como un entero RGBA en Vbuff.
-    // El formato RGBA se interpreta como: R en los primeros 8 bits, G en los siguientes 8, B en los siguientes 8 y A en los últimos 8.
-
-    // Clampea las coordenadas dentro de los límites de la pantalla
-    x0 = (x0 < 0) ? 0 : (x0 >= Ancho) ? Ancho - 1 : x0;
-    y0 = (y0 < 0) ? 0 : (y0 >= Alto) ? Alto - 1 : y0;
-    x1 = (x1 < 0) ? 0 : (x1 >= Ancho) ? Ancho - 1 : x1;
-    y1 = (y1 < 0) ? 0 : (y1 >= Alto) ? Alto - 1 : y1;
-    x2 = (x2 < 0) ? 0 : (x2 >= Ancho) ? Ancho - 1 : x2;
-    y2 = (y2 < 0) ? 0 : (y2 >= Alto) ? Alto - 1 : y2;
-
-    // Encuentra las diferencias y direcciones para cada borde del triángulo
-    int dx01 = abs(x0 - x1), dy01 = abs(y0 - y1);
-    int dx12 = abs(x1 - x2), dy12 = abs(y1 - y2);
-    int dx20 = abs(x2 - x0), dy20 = abs(y2 - y0);
-
-    int sx01 = (x0 < x1) ? 1 : -1, sy01 = (y0 < y1) ? 1 : -1;
-    int sx12 = (x1 < x2) ? 1 : -1, sy12 = (y1 < y2) ? 1 : -1;
-    int sx20 = (x2 < x0) ? 1 : -1, sy20 = (y2 < y0) ? 1 : -1;
-
-    // Calcula el punto de inicio y las direcciones de los bordes
-    int x = x0, y = y0;
-    int x1a = x1, y1a = y1;
-    int x2a = x2, y2a = y2;
-    int dx1, dy1, dx2, dy2;
-
-    if (dy01 > dx01) {
-        dx1 = dy01;
-        dy1 = dx01;
-        x1a = x0 + sx01;
-    } else {
-        dx1 = dx01;
-        dy1 = dy01;
-        y1a = y0 + sy01;
-    }
-
-    if (dy12 > dx12) {
-        dx2 = dy12;
-        dy2 = dx12;
-        x2a = x1 + sx12;
-    } else {
-        dx2 = dx12;
-        dy2 = dy12;
-        y2a = y1 + sy12;
-    }
-
-    // Dibuja los bordes del triángulo
-    while ((x != x1a || y != y1a) && (x != x2a || y != y2a)) {
-        // Dibuja el píxel actual
-        if (x >= 0 && x < Ancho && y >= 0 && y < Alto) {
-            int index = y * Ancho + x;
-            Vbuff[index] = color; // Establece el color en el búfer RGBA
-        }
-
-        int e1 = 2 * err1;
-        int e2 = 2 * err2;
-
-        if (e1 >= dy1) {
-            err1 += dy1;
-            x += sx01;
-        }
-
-        if (e2 >= dy2) {
-            err2 += dy2;
-            x += sx12;
-        }
-
-        if (e1 <= dx1) {
-            err1 += dx1;
-            y += sy01;
-        }
-
-        if (e2 <= dx2) {
-            err2 += dx2;
-            y += sy12;
-        }
-    }
-}
-
-*/
-
 #define _SWAP(A,B){ A^=B,B^=A,A^=B; }
 typedef struct{int x,y;}PUNTOS;
-
-void LineW(int x0, int x1, int y0, int color){
-	if(x0>x1)_SWAP(x0,x1);
-	int Len = (x1-x0);
-	while(Len--){
-		Vbuff[ y0 * _w + x0++ ] = color;
-	}
-}
-
-void polygonfill(const unsigned int cantidad, PUNTOS p[], int color) {
-    int xmin = p[0].x;
-    int xmax = p[0].x;
-    int ymin = p[0].y;
-    int ymax = p[0].y;
-
-    unsigned int i;
-  
-    for (i = 1; i < cantidad; i++) {
-        if (xmin > p[i].x) xmin = p[i].x;
-        if (xmax < p[i].x) xmax = p[i].x;
-        if (ymin > p[i].y) ymin = p[i].y;
-        if (ymax < p[i].y) ymax = p[i].y;
-    }
-  
-    double s = ymin + 0.01;
-  
-    while (s <= ymax) {
-        int inter[cantidad], c = 0;
-        int x1, x2, y1, y2, x, *Ti;
-      
-        for (i = 0; i < cantidad; i++) {
-            x1 = p[i].x;
-            y1 = p[i].y;
-            x2 = p[(i + 1) % cantidad].x;
-            y2 = p[(i + 1) % cantidad].y;
-          
-            if (y2 < y1) {
-                _SWAP(x1, x2);
-                _SWAP(y1, y2);
-            }
-          
-            if (s <= y2 && s >= y1) {
-                if ((y1 - y2) == 0)
-                    inter[c++] = x1;
-                else {
-                    x = ((x2 - x1) * (s - y1)) / (y2 - y1);
-                    inter[c++] = x + x1;
-                }
-            }
-        }
-        Ti=inter;
-        while(c){
-        	LineW(*Ti++,*Ti++,s,color);
-        	c-=2;
-        }
-        s++;
-    }
-}
 
 #define __AREA(X0,Y0,X1,Y1,X2,Y2) (float)(((X2) - (X0)) * ((Y1) - (Y0)) - ((Y2) - (Y0)) * ((X1) - (X0)))
 #define __near 300
 #define __fac 900 * (__near)
-void __fastcall DrawModel(float Cam[3]){
+void DrawModel(const unsigned int Pmodel, float Cam[3],float Rot[3]){
 	unsigned int i;
 	int _x,_y,_z,FOV;
-	PUNTOS Points[4];
-	int _V[_Model.FVM_HEAD.Num_V<<2];
-	int* Pv = _Model.V_;
-	unsigned int* Pf = _Model.F_;
+	GRILL Att;
+	int _V[ _Model[Pmodel].FVM_HEAD.Num_V<<2 ];
+	int* Pv = _Model[Pmodel].V_;
+	unsigned int* Pt = _Model[Pmodel].T_;
+	unsigned int* Pf = _Model[Pmodel].F_;
 	unsigned int index = 0;
-	for (i=0; i<_Model.FVM_HEAD.Num_V; ++i){
-		_x = *Pv++,
-		_y = *Pv++,
-		_z = *Pv++;
+	/*#####################*/
+	int cos0,sin0,cos1,sin1;
+	cos0 = fastCos(Rot[0]);
+	sin0 = fastSin(Rot[0]);
+	cos1 = fastCos(Rot[1]);
+	sin1 = fastSin(Rot[1]);
+	/*#####################*/
+	for (i=0; i<_Model[Pmodel].FVM_HEAD.Num_V; ++i){
+		int _x_ = *Pv++,
+			_y_ = *Pv++,
+			_z_ = *Pv++;
+
+		_x = (cos0*_x_ + sin0*_z_)/MAXSIN;
+		_y = (cos1*_y_ + (cos0*sin1*_z_-sin0*sin1*_x_)/MAXSIN)/MAXSIN;
+		_z = ((cos0*cos1*_z_-sin0*cos1*_x_)/MAXSIN - sin1*_y_)/MAXSIN;
 
 		_x += Cam[0];
 		_y += Cam[1];
@@ -374,47 +265,129 @@ void __fastcall DrawModel(float Cam[3]){
 		_V[index+1] = ( ( ( _y * FOV) ) >> 10 ) + _hm;
 		_V[index+2] = FOV;
 		_V[index+3] = _z;
-
-		Vbuff[ _V[index+1]*_w+_V[index+0] ] = 0xffffffff;
-
 		index += 4;
 	}
-	for (i=0; i<_Model.FVM_HEAD.Num_F; ++i){
-		int Av = (*Pf++)<<2;
-		int Bv = (*Pf++)<<2;
-		int Cv = (*Pf++)<<2;
+	for (i=0; i<_Model[Pmodel].FVM_HEAD.Num_F; i++){
+		unsigned int Av = (*Pf++)*4;
+		unsigned int Bv = (*Pf++)*4;
+		unsigned int Cv = (*Pf++)*4;
+		
+		unsigned int At = (*Pf++)*2;
+		unsigned int Bt = (*Pf++)*2;
+		unsigned int Ct = (*Pf++)*2;
+		Pf+=2;
 
-		int At = (*Pf++)<<1;
-		int Bt = (*Pf++)<<1;
-		int Ct = (*Pf++)<<1;
-		Pf++;
-		Pf++;
+		Att.vx0 = _V[ Av++ ];
+		Att.vy0 = _V[ Av++ ];
+		Att.vz0 = _V[ Av ];
+		Att.vx1 = _V[ Bv++ ];
+		Att.vy1 = _V[ Bv++ ];
+		Att.vz1 = _V[ Bv ];
+		Att.vx2 = _V[ Cv++ ];
+		Att.vy2 = _V[ Cv++ ];
+		Att.vz2 = _V[ Cv ];
 
-		Points[0].x=_V[Av++];
-		Points[0].y=_V[Av];
-		Points[1].x=_V[Bv++];
-		Points[1].y=_V[Bv];
-		Points[2].x=_V[Cv++];
-		Points[2].y=_V[Cv];
+		Att.tx0 = Pt[ At++ ] / Att.vz0;
+		Att.ty0 = Pt[ At ] / Att.vz0;
+		Att.tx1 = Pt[ Bt++ ] / Att.vz1;
+		Att.ty1 = Pt[ Bt ] / Att.vz1;
+		Att.tx2 = Pt[ Ct++ ] / Att.vz2;
+		Att.ty2 = Pt[ Ct ] / Att.vz2;
 
-		float A0 = __AREA(
-			Points[0].x,
-			Points[0].y,
-			
-			Points[1].x,
-			Points[1].y,
-			
-			Points[2].x,
-			Points[2].y
-		);
-
-		if(A0>=0)continue;
-
-		polygonfill(3,Points,0xffff0000);
+		Att.area = __AREA( Att.vx0, Att.vy0, Att.vx1, Att.vy1, Att.vx2, Att.vy2);
+		Att.act = 0;
+		Att.Pmodel = Pmodel;
+		if(
+			(unsigned int)Att.vz0 >= __fac ||
+			(unsigned int)Att.vz1 >= __fac ||
+			(unsigned int)Att.vz2 >= __fac
+		)continue;
+		if(Att.area>=0)continue;
+		{
+			int min_y = __min( Att.vy0, __min( Att.vy1, Att.vy2 ) );
+			int min_x = __min( Att.vx0, __min( Att.vx1, Att.vx2 ) );
+			int max_y = __max( Att.vy0, __max( Att.vy1, Att.vy2 ) );
+			int max_x = __max( Att.vx0, __max( Att.vx1, Att.vx2 ) );
+			if(min_y<0){ min_y=0; }
+			if(max_y>=_h){ max_y=_h-1; }
+			if(min_x<0){ min_x=0; }
+			if(max_x>=_w){ max_x=_w-1; }
+			_z = (( Att.vz0 + Att.vz1 + Att.vz2 ) / 3);
+			Att.act = 1;
+			for (_y=min_y; _y<max_y; ++_y)
+			{
+				for (_x=min_x; _x<max_x; ++_x)
+				{
+					float W0 = __AREA( Att.vx1,Att.vy1,Att.vx2,Att.vy2,_x,_y)/Att.area;
+					float W1 = __AREA( Att.vx2,Att.vy2,Att.vx0,Att.vy0,_x,_y)/Att.area;
+					float W2 = __AREA( Att.vx0,Att.vy0,Att.vx1,Att.vy1,_x,_y)/Att.area;
+					if ( (Zbuff[ _y * _w + _x ] < _z) && ((W0>=0) & (W1>=0) & (W2>=0)) ){
+						Zbuff[ _y * _w + _x ] = _z;
+						Gbuff[ _y * _w + _x ] = Att;
+					}
+				}
+			}
+		}
 	}
 }
-void __fastcall SetShader(void){
+
+int ___RGB(int r, int g, int b){
+	return ( (r&0xff) << 16 | (g&0xff)<<8 | (b&0xff) );
 }
+
+int BilinealTex(const unsigned int X, const unsigned int Y, const unsigned int Tam, unsigned int* Tex){
+	float totalR = 0, totalG = 0, totalB = 0;
+	unsigned int count=0,r, c;
+	unsigned char *channel;
+	const unsigned int xaxis[] = {Y - 1, Y, Y + 1}, yaxis[] = {X - 1, X, X + 1};
+	for ( r = 0; r < 3; ++r){
+	    for ( c = 0; c < 3; ++c){
+			const int curRow = xaxis[r];
+			const int curCol = yaxis[c];
+	    	if ( (unsigned int)curRow < Tam && (unsigned int)curCol < Tam ){
+	    		channel = (unsigned char*)&Tex[ curRow * Tam + curCol ];
+	    		totalB += *channel++;
+	    		totalG += *channel++;
+	    		totalR += *channel++;
+	    		count++;
+	    	}
+	    }
+	}
+	totalR /= count, totalG /= count, totalB /= count;
+	return ___RGB(totalR,totalG,totalB);
+}
+
+#define _Efect_RGB(_X,_Y) ((X+Y-X+Y)-X | (X+Y+X+Y)-Y * 0xff)
+
+void SetShader(void){
+	int X,Y,U,V;
+	float W0,W1,W2,Z;
+	int* VIDEO = Vbuff;
+	int* DEPTH = Zbuff;
+	GRILL* _X_ = Gbuff;
+	for (Y = 0; Y < _h; ++Y)
+	{
+		for (X = 0; X < _w; ++X)
+		{
+			*VIDEO = _fills[0] & _Efect_RGB(X,Y);
+			*DEPTH = _fills[1];
+			W0 = __AREA( _X_->vx1,_X_->vy1,_X_->vx2,_X_->vy2,X,Y) / _X_->area;
+			W1 = __AREA( _X_->vx2,_X_->vy2,_X_->vx0,_X_->vy0,X,Y) / _X_->area;
+			W2 = __AREA( _X_->vx0,_X_->vy0,_X_->vx1,_X_->vy1,X,Y) / _X_->area;
+			if(_X_->act){
+				Z = (1/(W0 * (1/_X_->vz0) + W1 * (1/_X_->vz1) + W2 * (1/_X_->vz2)));
+				U = (int)(( W0 * _X_->tx0 + W1 * _X_->tx1 + W2 * _X_->tx2 )*Z) % (_Model[_X_->Pmodel].FVM_HEAD.Num_Tam_T-1);
+				V = (int)(( W0 * _X_->ty0 + W1 * _X_->ty1 + W2 * _X_->ty2 )*Z) % (_Model[_X_->Pmodel].FVM_HEAD.Num_Tam_T-1);
+				*VIDEO = BilinealTex(U,V,_Model[_X_->Pmodel].FVM_HEAD.Num_Tam_T,_Model[_X_->Pmodel].TEX);
+			}
+			VIDEO++;
+			DEPTH++;
+			_X_->act = 0;
+			_X_++;
+		}
+	}
+}
+
 ///////////////////////////////////////////////////////////////////////
 ///////////////////////////////////////////////////////////////////////
 ///////////////////////////////////////////////////////////////////////
@@ -422,21 +395,38 @@ void __fastcall SetShader(void){
 
 int main(int argc, char const *argv[]){
 
-	_GUB_NULL_FVM_(&_Model);
-	// _GUB_LOAD_FVM_(&_Model,"extra.fvm");
-	_GUB_LOAD_FVM_(&_Model,"soldier.fvm");
+	_GUB_NULL_FVM_(&_Model[0]);
+	_GUB_NULL_FVM_(&_Model[1]);
+	_GUB_NULL_FVM_(&_Model[2]);
+
+	_GUB_LOAD_FVM_(&_Model[0],"extra.fvm");
+	_GUB_LOAD_FVM_(&_Model[1],"soldier.fvm");
+	_GUB_LOAD_FVM_(&_Model[2],"shambler.fvm");
 
 	CreateCanvas(640,480);
+	SetFillCanvas(0xffffffff);
+	SetFillDepth(-999);
 
-	float Camera[3] = {0,0,4000};
+	float Camera0[3] = {1000,0,4000};
+	float Camera1[3] = {-1000,0,4000};
+	float Camera2[3] = {-300,300,1000};
 
-	DrawModel(Camera);
+	float Rot0[3] = {-170,0,0};
+	float Rot1[3] = {-180,0,0};
+	float Rot2[3] = {-180,0,0};
+
+	DrawModel(0,Camera0,Rot0);
+	DrawModel(1,Camera1,Rot1);
+	DrawModel(2,Camera2,Rot2);
+
 	SetShader();
+
+	_GUB_FREE_FVM_(&_Model[0]);
+	_GUB_FREE_FVM_(&_Model[1]);
+	_GUB_FREE_FVM_(&_Model[2]);
 
 	FlipBuff();
 	FreeCanvas();
-
-	_GUB_FREE_FVM_(&_Model);
 
 	return 0;
 }
