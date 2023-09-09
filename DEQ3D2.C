@@ -129,6 +129,7 @@ typedef struct{
 	float tx2,ty2;
 }GRILL;
 #include <intrin.h>
+#include <time.h>
 
 ////////////////////////////////////////////////
 // Create Screen Buffer[CANVAS]
@@ -341,17 +342,17 @@ int BilinealTex(const unsigned int X, const unsigned int Y, const unsigned int T
 	unsigned char *channel;
 	const unsigned int xaxis[] = {Y - 1, Y, Y + 1}, yaxis[] = {X - 1, X, X + 1};
 	for ( r = 0; r < 3; ++r){
-	    for ( c = 0; c < 3; ++c){
+		for ( c = 0; c < 3; ++c){
 			const int curRow = xaxis[r];
 			const int curCol = yaxis[c];
-	    	if ( (unsigned int)curRow < Tam && (unsigned int)curCol < Tam ){
-	    		channel = (unsigned char*)&Tex[ curRow * Tam + curCol ];
-	    		totalB += *channel++;
-	    		totalG += *channel++;
-	    		totalR += *channel++;
-	    		count++;
-	    	}
-	    }
+			if ( (unsigned int)curRow < Tam && (unsigned int)curCol < Tam ){
+				channel = (unsigned char*)&Tex[ curRow * Tam + curCol ];
+				totalB += *channel++;
+				totalG += *channel++;
+				totalR += *channel++;
+				count++;
+			}
+		}
 	}
 	totalR /= count, totalG /= count, totalB /= count;
 	return ___RGB(totalR,totalG,totalB);
@@ -359,12 +360,37 @@ int BilinealTex(const unsigned int X, const unsigned int Y, const unsigned int T
 
 #define _Efect_RGB(_X,_Y) ((X+Y-X+Y)-X | (X+Y+X+Y)-Y * 0xff)
 
+int dist;
+// Positions light...
+static volatile int lpx = 640>>1;
+static volatile int lpy = 480>>1;
+static volatile int lpz = 90;
+static volatile int lightLUM = 2;
+static volatile int lightL =  (1<<16) * lightLUM;
+static volatile int lightC = 0xffffeafa;//( 51<<16 | 204<<8 | 255<<0 );
+// Use POW light
+static volatile int tmpX,tmpY,tmpZ;
+#define DIST_LIGHT( __dist, __x, __y, __z )\
+	tmpX = lpx - (__x),\
+	tmpY = lpy - (__y),\
+	tmpZ = lpz - (__z),\
+	(__dist) = ( (tmpX * tmpX) + (tmpY * tmpY) + (tmpZ * tmpZ) )
+
+int colortintar( unsigned int c0, unsigned int c1 ){
+	unsigned char R,G,B;
+	R = ((c0>>16&0xFF)/255.0f)*(c1>>16&0xFF);
+	G = ((c0>> 8&0xFF)/255.0f)*(c1>> 8&0xFF);
+	B = ((c0  &  0xFF)/255.0f)*(c1  &  0xFF);
+	return (B&0xFF) | G<<8 | R<<16 | c1<<24;
+}
+
 void SetShader(void){
 	int X,Y,U,V;
 	float W0,W1,W2,Z;
 	int* VIDEO = Vbuff;
 	int* DEPTH = Zbuff;
 	GRILL* _X_ = Gbuff;
+	lightC = ___RGB( 150,150,150 );
 	for (Y = 0; Y < _h; ++Y)
 	{
 		for (X = 0; X < _w; ++X)
@@ -375,10 +401,25 @@ void SetShader(void){
 			W1 = __AREA( _X_->vx2,_X_->vy2,_X_->vx0,_X_->vy0,X,Y) / _X_->area;
 			W2 = __AREA( _X_->vx0,_X_->vy0,_X_->vx1,_X_->vy1,X,Y) / _X_->area;
 			if(_X_->act){
+
 				Z = (1/(W0 * (1/_X_->vz0) + W1 * (1/_X_->vz1) + W2 * (1/_X_->vz2)));
+
+				DIST_LIGHT( dist, X, Y, Z );
+
+				dist += 1>>dist;
+	            int intencidad = (lightL / dist);
+
 				U = (int)(( W0 * _X_->tx0 + W1 * _X_->tx1 + W2 * _X_->tx2 )*Z) % (_Model[_X_->Pmodel].FVM_HEAD.Num_Tam_T-1);
 				V = (int)(( W0 * _X_->ty0 + W1 * _X_->ty1 + W2 * _X_->ty2 )*Z) % (_Model[_X_->Pmodel].FVM_HEAD.Num_Tam_T-1);
 				*VIDEO = BilinealTex(U,V,_Model[_X_->Pmodel].FVM_HEAD.Num_Tam_T,_Model[_X_->Pmodel].TEX);
+				unsigned char *_TEX_ = (unsigned char*)VIDEO;
+				int Bl = (*_TEX_++) * intencidad;
+				int Gl = (*_TEX_++) * intencidad;
+				int Rl = (*_TEX_  ) * intencidad;
+				Rl = (Rl>=0xff)?0xff:Rl;
+				Gl = (Gl>=0xff)?0xff:Gl;
+				Bl = (Bl>=0xff)?0xff:Bl;
+				*VIDEO = colortintar( ((Rl)<<16 | (Gl)<<8 | (Bl)<<0), lightC );
 			}
 			VIDEO++;
 			DEPTH++;
@@ -416,7 +457,9 @@ int main(int argc, char const *argv[]){
 	float Rot2[3] = {-180,0,0};
 
 	DrawModel(0,Camera0,Rot0);
+	srand(time(0));
 	DrawModel(1,Camera1,Rot1);
+	srand(time(0));
 	DrawModel(2,Camera2,Rot2);
 
 	SetShader();
@@ -430,3 +473,12 @@ int main(int argc, char const *argv[]){
 
 	return 0;
 }
+
+
+
+/*
+
+Mi nueva técnica de rasterizado por software mas rápido y optimizado.
+Próximamente pondré el GITHUB del codigo.
+
+*/
